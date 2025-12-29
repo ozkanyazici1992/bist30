@@ -1,21 +1,20 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import numpy as np
-import plotly.express as px
 import plotly.graph_objects as go
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # -----------------------------------------------------------------------------
-# 1. SAYFA AYARLARI VE SABİTLER
+# 1. SAYFA AYARLARI (MODERN GÖRÜNÜM)
 # -----------------------------------------------------------------------------
 st.set_page_config(
-    page_title="BIST30 Yapay Zeka Zamanlayıcı",
-    page_icon="📈",
-    layout="wide"
+    page_title="BIST30 AI Trader",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-# BIST 30 Listesi ve Endeks
+# BIST 30 Listesi
 BIST_TICKERS = {
     "BIST 30 ENDEKSİ": "XU030.IS",
     "AKBNK - Akbank": "AKBNK.IS",
@@ -53,56 +52,32 @@ BIST_TICKERS = {
 }
 
 # -----------------------------------------------------------------------------
-# 2. VERİ ÇEKME FONKSİYONU (CACHE MEKANİZMALI)
+# 2. VERİ ÇEKME VE İŞLEME
 # -----------------------------------------------------------------------------
-@st.cache_data(ttl=3600)  # 1 saatlik önbellek
+@st.cache_data(ttl=3600)
 def get_hourly_data(ticker_symbol):
-    """
-    Seçilen hissenin son 730 günlük (2 yıl) saatlik verisini çeker.
-    """
     try:
-        # yfinance ile son 2 yıl, saatlik veri
         df = yf.download(ticker_symbol, period="2y", interval="1h", progress=False)
+        if df.empty: return None
         
-        if df.empty:
-            return None
-
-        # Sütun isimlerini düzeltme (MultiIndex sorununa karşı)
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
             
         df = df.reset_index()
-        
-        # Tarih sütunu standardizasyonu
         date_col = 'Date' if 'Date' in df.columns else 'Datetime'
         df.rename(columns={date_col: 'Date'}, inplace=True)
-        
-        # Timezone temizliği
         df['Date'] = pd.to_datetime(df['Date']).dt.tz_localize(None)
         
-        # Yeni özellikler ekle
+        # Feature Engineering
         df['Month'] = df['Date'].dt.month
         df['Day'] = df['Date'].dt.day
         df['Hour'] = df['Date'].dt.hour
         df['DateOnly'] = df['Date'].dt.date
-        
         return df
-    except Exception as e:
-        st.error(f"Veri çekme hatası: {e}")
+    except Exception:
         return None
 
-# -----------------------------------------------------------------------------
-# 3. ANALİZ MOTORU
-# -----------------------------------------------------------------------------
-def analyze_intraday_seasonality(df, target_month, target_day, window=5):
-    """
-    Belirli bir tarih aralığındaki saatlik performansı analiz eder.
-    Window: Seçilen günün sağından ve solundan kaç gün bakılacağı (Veri az olduğu için pencereyi geniş tutmak iyidir)
-    """
-    # 1. Tarih Filtreleme (Güneş Takvimi Paternleri)
-    # Yıl farketmeksizin o gün ve çevresindeki günleri al
-    
-    # Basit filtreleme yerine döngüsel gün kontrolü (Yılbaşı/Yılsonu geçişleri hariç basitleştirilmiş)
+def analyze_seasonality(df, target_month, target_day, window=3):
     mask = (
         (df['Month'] == target_month) & 
         (df['Day'] >= target_day - window) & 
@@ -110,136 +85,141 @@ def analyze_intraday_seasonality(df, target_month, target_day, window=5):
     )
     subset = df[mask].copy()
     
-    if len(subset) < 10:  # Yetersiz veri kontrolü
-        return None, None
+    if len(subset) < 5: return None, None
 
-    # 2. Normalizasyon (ÖNEMLİ ADIM)
-    # Her günü kendi içinde 0'dan başlatıp yüzdesel değişime bakmalıyız.
-    # Yoksa 100 TL'lik fiyat ile 10 TL'lik fiyatın ortalaması yanlış olur.
-    
+    # Normalizasyon: Her günü açılış fiyatına göre %0'dan başlat
     subset['Pct_Change'] = subset.groupby('DateOnly')['Close'].transform(
         lambda x: (x - x.iloc[0]) / x.iloc[0] * 100
     )
     
-    # 3. Saatlik Ortalamaları Al
+    # 10:00 - 18:00 arası filtrele
     hourly_stats = subset.groupby('Hour')['Pct_Change'].mean().reset_index()
-    
-    # Sadece işlem saatlerini al (10:00 - 18:00 arası, bazen 09:00 gelebilir temizleyelim)
     hourly_stats = hourly_stats[(hourly_stats['Hour'] >= 10) & (hourly_stats['Hour'] <= 18)]
     
     return hourly_stats, len(subset['DateOnly'].unique())
 
 # -----------------------------------------------------------------------------
-# 4. ARAYÜZ (SIDEBAR & MAIN)
+# 3. ARAYÜZ TASARIMI
 # -----------------------------------------------------------------------------
 
-# --- SIDEBAR ---
-st.sidebar.title("🛠️ Analiz Ayarları")
-st.sidebar.markdown("---")
+# --- Sidebar ---
+with st.sidebar:
+    st.header("⚙️ Kontrol Paneli")
+    selected_name = st.selectbox("Hisse Seçimi", list(BIST_TICKERS.keys()))
+    
+    st.markdown("### 📅 Gelecek Planı")
+    
+    # --- DEĞİŞİKLİK BURADA: MİNİMUM TARİH 2026 ---
+    min_date = datetime(2026, 1, 1)
+    user_date = st.date_input(
+        "Hedef Tarih", 
+        value=min_date,      # Varsayılan değer
+        min_value=min_date   # Bundan öncesi seçilemez
+    )
+    
+    st.markdown("---")
+    st.caption("⚠️ **Not:** Sadece 2026 ve sonrası için planlama yapılabilir. Sistem, seçtiğiniz tarihin geçmiş yıllardaki izlerini sürer.")
 
-selected_name = st.sidebar.selectbox("Hisse / Endeks Seçin", list(BIST_TICKERS.keys()))
+# --- Ana Sayfa ---
+st.markdown(f"## 📈 {selected_name}")
+st.markdown(f"**Hedeflenen Tarih:** {user_date.strftime('%d %B %Y')}")
+
+# Veri Yükleme
 ticker_symbol = BIST_TICKERS[selected_name]
-
-st.sidebar.subheader("📅 Tarih Seçimi")
-# Kullanıcıdan sadece gün ve ayı almak için date_input kullanıyoruz ama yılı yoksayacağız
-user_date = st.sidebar.date_input("Analiz Tarihi", datetime.now())
-target_month = user_date.month
-target_day = user_date.day
-
-st.sidebar.info(f"Seçilen Tarih: **{target_day} / {target_month}**\n\nBu sistem, son 2 yıldaki verileri tarayarak, yılın bu dönemlerinde gün içi (saatlik) hareketlerin ortalamasını çıkarır.")
-
-# --- MAIN PAGE ---
-st.title(f"📊 {selected_name} - Gün İçi Al/Sat Stratejisi")
-st.markdown(f"**Analiz edilen dönem:** Son 2 Yıl | **Hedef Tarih:** {target_day} {datetime(2023, target_month, 1).strftime('%B')}")
-
-# Veriyi Çek
-with st.spinner('Veriler Borsa İstanbul sunucularından (Yahoo Finance) çekiliyor...'):
-    df = get_hourly_data(ticker_symbol)
+df = get_hourly_data(ticker_symbol)
 
 if df is not None:
-    # Analizi Yap
-    stats, days_count = analyze_intraday_seasonality(df, target_month, target_day)
+    # Yıl ne olursa olsun, Ay ve Gün bilgisini alıp geçmişe bakıyoruz
+    stats, days_count = analyze_seasonality(df, user_date.month, user_date.day)
     
     if stats is not None and not stats.empty:
-        # En iyi ve en kötü saatleri bul
+        # Hesaplamalar
         min_val = stats['Pct_Change'].min()
         max_val = stats['Pct_Change'].max()
+        best_buy = stats.loc[stats['Pct_Change'].idxmin()]['Hour']
+        best_sell = stats.loc[stats['Pct_Change'].idxmax()]['Hour']
         
-        best_buy_hour = stats.loc[stats['Pct_Change'].idxmin()]['Hour']
-        best_sell_hour = stats.loc[stats['Pct_Change'].idxmax()]['Hour']
+        # --- BÖLÜM 1: KPI KARTLARI ---
+        kpi_cols = st.columns(4)
         
-        # Fark (Marj)
-        margin = max_val - min_val
+        with kpi_cols[0]:
+            st.container(border=True).metric(label="📉 İdeal Alış", value=f"{int(best_buy)}:00")
+        with kpi_cols[1]:
+            st.container(border=True).metric(label="📈 İdeal Satış", value=f"{int(best_sell)}:00")
+        with kpi_cols[2]:
+            st.container(border=True).metric(label="💰 Potansiyel Marj", value=f"%{max_val - min_val:.2f}")
+        with kpi_cols[3]:
+            st.container(border=True).metric(label="📊 Referans Veri", value=f"{days_count} Gün")
+
+        # --- BÖLÜM 2: GRAFİK ---
+        st.markdown("### ⏱️ Gün İçi Rota Simülasyonu")
         
-        # KPI KARTLARI
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("📉 En İyi Alış Saati", f"{int(best_buy_hour)}:00", delta_color="inverse")
-        col2.metric("📈 En İyi Satış Saati", f"{int(best_sell_hour)}:00")
-        col3.metric("💰 Ort. Gün İçi Marj", f"%{margin:.2f}")
-        col4.metric("📚 Analiz Edilen Gün", f"{days_count} Gün")
-        
-        # GRAFİK (Plotly)
         fig = go.Figure()
-        
-        # Çizgi
+
+        # Ana Çizgi
         fig.add_trace(go.Scatter(
-            x=stats['Hour'], 
-            y=stats['Pct_Change'], 
-            mode='lines+markers',
-            name='Ortalama Hareket',
-            line=dict(color='#1f77b4', width=3)
-        ))
-        
-        # Alış Noktası İşaretleyici
-        fig.add_trace(go.Scatter(
-            x=[best_buy_hour], y=[min_val],
-            mode='markers+text',
-            name='Alış Bölgesi',
-            marker=dict(color='green', size=15, symbol='triangle-up'),
-            text=["AL"], textposition="bottom center"
+            x=stats['Hour'], y=stats['Pct_Change'],
+            mode='lines',
+            name='Tahmini Hareket',
+            line=dict(color='#2962FF', width=4, shape='spline'),
+            fill='tozeroy',
+            fillcolor='rgba(41, 98, 255, 0.1)'
         ))
 
-        # Satış Noktası İşaretleyici
+        # Alım Noktası
         fig.add_trace(go.Scatter(
-            x=[best_sell_hour], y=[max_val],
-            mode='markers+text',
-            name='Satış Bölgesi',
-            marker=dict(color='red', size=15, symbol='triangle-down'),
-            text=["SAT"], textposition="top center"
+            x=[best_buy], y=[min_val],
+            mode='markers',
+            marker=dict(color='#00C853', size=15, line=dict(width=2, color='white')),
+            name='Alım Fırsatı'
+        ))
+
+        # Satım Noktası
+        fig.add_trace(go.Scatter(
+            x=[best_sell], y=[max_val],
+            mode='markers',
+            marker=dict(color='#D50000', size=15, line=dict(width=2, color='white')),
+            name='Satış Fırsatı'
         ))
 
         fig.update_layout(
-            title="Saatlik Kümülatif Getiri Eğrisi (Açılışa Göre %)",
-            xaxis_title="Saat (10:00 - 18:00)",
-            yaxis_title="Gün İçi Değişim (%)",
+            plot_bgcolor='white',
+            paper_bgcolor='white',
+            xaxis=dict(
+                title="Saat (10:00 - 18:00)", 
+                showgrid=False, 
+                dtick=1,
+                linecolor='black'
+            ),
+            yaxis=dict(
+                title="Tahmini Değişim (%)", 
+                showgrid=True, 
+                gridcolor='#f0f0f0',
+                zeroline=True,
+                zerolinecolor='#e0e0e0'
+            ),
             hovermode="x unified",
-            xaxis=dict(tickmode='linear', tick0=10, dtick=1),
-            template="plotly_white"
+            margin=dict(l=20, r=20, t=30, b=20),
+            showlegend=False
         )
         
         st.plotly_chart(fig, use_container_width=True)
-        
-        # TAVSİYE METNİ
-        st.subheader("🤖 Yapay Zeka Strateji Özeti")
-        
-        trend_direction = "Yükseliş" if stats.iloc[-1]['Pct_Change'] > 0 else "Düşüş"
-        
-        advice_box = f"""
-        **Analiz Sonucu:**
-        Geçmiş veriler gösteriyor ki, **{selected_name}** bu tarihlerde genellikle günü **{trend_direction}** eğilimiyle kapatıyor.
-        
-        👉 **Strateji:** Eğer gün içi işlem (trade) yapacaksanız, istatistiksel olarak en uygun alış saati **{int(best_buy_hour)}:00** civarıdır. 
-        Sabah açılışındaki volatilitenin geçmesini beklemek mantıklı görünüyor. 
-        Pozisyonunuzu kârla kapatmak için en uygun zaman dilimi ise **{int(best_sell_hour)}:00** sularıdır.
-        """
-        
-        if trend_direction == "Yükseliş":
-            st.success(advice_box)
-        else:
-            st.warning(advice_box)
+
+        # --- BÖLÜM 3: STRATEJİ KARTI ---
+        with st.container(border=True):
+            st.subheader("🤖 Yapay Zeka Tavsiyesi")
+            
+            trend = "YÜKSELİŞ" if stats.iloc[-1]['Pct_Change'] > 0 else "DÜŞÜŞ"
+            trend_color = "green" if trend == "YÜKSELİŞ" else "red"
+            
+            st.markdown(f"""
+            * **Tahmin:** Geçmiş verilere dayanarak, **{user_date.strftime('%d %B')}** tarihinde bu hissenin günü :{trend_color}[**{trend}**] yönünde kapatması bekleniyor.
+            * **Alış Zamanlaması:** Sabah açılışından sonra saat **{int(best_buy)}:00** civarında dip oluşumu gözlemlenmiştir.
+            * **Satış Zamanlaması:** Gün içi en yüksek değerlere genellikle **{int(best_sell)}:00** sularında ulaşılmaktadır.
+            """)
             
     else:
-        st.error("⚠️ Seçilen tarih aralığı için yeterli geçmiş veri bulunamadı (Hafta sonuna veya tatillere denk geliyor olabilir). Lütfen tarihi 1-2 gün kaydırarak tekrar deneyin.")
+        st.warning("⚠️ Bu tarih için referans alınabilecek yeterli geçmiş veri bulunamadı. (Hafta sonu etkisi olabilir).")
 
 else:
-    st.info("Veri bekleniyor... Sol menüden seçim yapın.")
+    st.info("Veriler yükleniyor...")
