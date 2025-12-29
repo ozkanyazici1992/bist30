@@ -1,18 +1,3 @@
-İstediğin proje tam olarak **"Intraday Seasonality Analyzer"** (Gün İçi Mevsimsellik Analizörü) olarak adlandırılır.
-
-Aşağıda, **Streamlit** kullanarak hazırladığım, `yfinance` üzerinden anlık olarak son 730 günün (maksimum izin verilen) saatlik verisini çeken, veriyi işleyen ve sana hem grafik hem de metin olarak tavsiye veren tam kod bulunmaktadır.
-
-Bu kodda **BIST 30 Endeksi (XU030)** ve **BIST 30 Hisseleri** tanımlıdır.
-
-### Nasıl Çalıştırılır?
-
-1. Bilgisayarında `streamlit`, `yfinance`, `plotly` ve `pandas` kütüphanelerinin yüklü olduğundan emin ol.
-2. Aşağıdaki kodu `bist30_analiz.py` adıyla kaydet.
-3. Terminalden `streamlit run bist30_analiz.py` komutunu çalıştır.
-
-### Python Kodu (bist30_analiz.py)
-
-```python
 import streamlit as st
 import yfinance as yf
 import pandas as pd
@@ -258,6 +243,3 @@ if df is not None:
 
 else:
     st.info("Veri bekleniyor... Sol menüden seçim yapın.")
-
-
-```
