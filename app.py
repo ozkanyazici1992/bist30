@@ -93,11 +93,9 @@ def analyze_by_week_cycle(df, target_week, target_day_of_week):
     start_prices = subset.groupby('DateOnly')['Close'].transform('first')
     subset['Pct_Change'] = ((subset['Close'] - start_prices) / start_prices) * 100
     
-    # Gruplama
     hourly_stats = subset.groupby('Hour')['Pct_Change'].mean().reset_index()
     
-    # EKSİK SAATLERİ DOLDURMA (Grafik Kopmasın Diye)
-    full_hours = pd.DataFrame({'Hour': range(10, 19)}) # 10 ile 18 arası
+    full_hours = pd.DataFrame({'Hour': range(10, 19)}) 
     hourly_stats = pd.merge(full_hours, hourly_stats, on='Hour', how='left')
     hourly_stats['Pct_Change'] = hourly_stats['Pct_Change'].interpolate(method='linear')
     hourly_stats['Pct_Change'] = hourly_stats['Pct_Change'].ffill()
@@ -137,19 +135,13 @@ if target_day_of_week > 4:
 else:
     ticker_symbol = BIST_TICKERS[selected_name]
 
-    # Yükleme Barı (Sadeleştirildi)
-    with st.status("Veriler işleniyor...", expanded=True) as status:
+    # --- DEĞİŞİKLİK BURADA: 'status' yerine 'spinner' ---
+    # Sadece dönen tekerlek çıkar, bitince kaybolur. Yazı kalmaz.
+    stats = None
+    with st.spinner('Analiz yapılıyor...'):
         df = get_optimized_data(ticker_symbol)
         if df is not None:
             stats = analyze_by_week_cycle(df, target_week, target_day_of_week)
-            if stats is not None and not stats.empty:
-                # BURAYI DEĞİŞTİRDİK: Sadece "Veri Hazır" yazıp kapanıyor
-                status.update(label="Veri Hazır", state="complete", expanded=False)
-            else:
-                status.update(label="Bu hafta/gün için geçmiş veri yok.", state="error")
-                stats = None
-        else:
-            status.update(label="Sunucu Bağlantı Hatası", state="error")
 
     if df is not None and stats is not None and not stats.empty:
         min_val = stats['Pct_Change'].min()
@@ -230,3 +222,8 @@ else:
             </p>
         </div>
         """, unsafe_allow_html=True)
+    
+    elif df is None:
+        st.error("Sunucu bağlantısı kurulamadı. Lütfen sayfayı yenileyiniz.")
+    else:
+        st.warning("Bu tarih/döngü için yeterli geçmiş veri bulunamadı.")
