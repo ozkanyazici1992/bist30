@@ -6,53 +6,58 @@ from datetime import datetime
 import time
 
 # -----------------------------------------------------------------------------
-# 1. TASARIM: KURUMSAL AYDINLIK TEMA (CORPORATE LIGHT)
+# 1. TASARIM: SICAK TURUNCU TEMA (WARM AMBER)
 # -----------------------------------------------------------------------------
 st.set_page_config(
     page_title="ProTrade AI",
-    page_icon="💎",
+    page_icon="🔥",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Özel CSS: Ferah, beyaz ve kurumsal görünüm
+# Özel CSS: Turuncu/Krem Tonları
 st.markdown("""
     <style>
-    /* Ana Arka Plan: Çok açık gri (Göz yormayan beyazlık) */
+    /* Ana Arka Plan: Yumuşak Krem/Turuncu (Göz yormaz) */
     .stApp {
-        background-color: #f8f9fa;
+        background-color: #fff3e0;
     }
     
-    /* Sidebar Rengi: Tam Beyaz */
+    /* Sidebar Rengi: Beyaz (Temiz görünüm için) */
     [data-testid="stSidebar"] {
         background-color: #ffffff;
-        border-right: 1px solid #e0e0e0;
+        border-right: 1px solid #ffcc80;
     }
     
-    /* Metrik Kartları: Beyaz ve hafif gölgeli (Apple Style) */
+    /* Metrik Kartları: Beyaz ve Hafif Turuncu Gölgeli */
     div[data-testid="stMetric"] {
         background-color: #ffffff;
-        border: 1px solid #e0e0e0;
-        border-radius: 10px;
+        border: 1px solid #ffe0b2;
+        border-radius: 12px;
         padding: 15px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.05); /* Çok hafif gölge */
+        box-shadow: 0 4px 6px rgba(255, 167, 38, 0.1);
     }
     
-    /* Yazı Renkleri (Siyah/Gri) */
-    h1, h2, h3, h4, p, span {
-        color: #1f2937 !important; /* Koyu antrasit */
+    /* Başlık Renkleri: Koyu Turuncu/Kahve */
+    h1, h2, h3, h4 {
+        color: #e65100 !important; /* Koyu Turuncu */
         font-family: 'Segoe UI', sans-serif;
     }
     
     /* Metrik Değerleri */
     div[data-testid="stMetricValue"] {
-        color: #111827 !important; /* Simsiyah */
-        font-weight: 700;
+        color: #ef6c00 !important;
+        font-weight: 800;
     }
     
     /* Etiket Renkleri */
     div[data-testid="stMetricLabel"] {
-        color: #6b7280 !important; /* Orta gri */
+        color: #fb8c00 !important;
+    }
+    
+    /* Buton ve Seçim Kutuları Vurgusu */
+    .stSelectbox, .stDateInput {
+        color: #e65100;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -73,16 +78,14 @@ BIST_TICKERS = {
 }
 
 # -----------------------------------------------------------------------------
-# 2. VERİ ÇEKME (RATE LIMIT KORUMALI)
+# 2. VERİ ÇEKME (AYNI GÜVENLİ YAPI)
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_optimized_data(ticker_symbol):
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            # Hata almamak için threads=False
             df = yf.download(ticker_symbol, period="2y", interval="1h", progress=False, threads=False)
-            
             if df.empty:
                 time.sleep(1)
                 continue
@@ -144,19 +147,18 @@ with st.sidebar:
     user_date = st.date_input("İşlem Tarihi", value=min_date, min_value=min_date)
     
     st.markdown("---")
-    st.info("Veriler BIST işlem saatlerine (09:00 - 18:10) göredir.")
+    st.warning("Piyasalar 09:00 - 18:10 arası açıktır.")
 
 # Ana Başlık
 st.markdown(f"## 📈 {selected_name}")
-st.markdown(f"<span style='color:#6b7280; font-size:1.1rem;'>Hedef Analiz Tarihi: **{user_date.strftime('%d %B %Y')}**</span>", unsafe_allow_html=True)
+st.markdown(f"<span style='color:#ef6c00; font-weight:500'>Analiz Hedefi: {user_date.strftime('%d %B %Y')}</span>", unsafe_allow_html=True)
 
-# Veri İşlemleri
+# Veri İşleme
 ticker_symbol = BIST_TICKERS[selected_name]
 
-# Yükleme Göstergesi
-with st.status("Veriler Borsa İstanbul sunucularından alınıyor...", expanded=True) as status:
+# Yükleme Barı (Turuncu)
+with st.status("Veriler işleniyor...", expanded=True) as status:
     df = get_optimized_data(ticker_symbol)
-    
     if df is not None:
         stats = analyze_seasonality(df, user_date.month, user_date.day)
         if stats is not None and not stats.empty:
@@ -164,7 +166,7 @@ with st.status("Veriler Borsa İstanbul sunucularından alınıyor...", expanded
         else:
             status.update(label="Yetersiz Veri", state="error")
     else:
-        status.update(label="Sunucu Hatası (Lütfen tekrar deneyin)", state="error")
+        status.update(label="Hata Oluştu", state="error")
 
 if df is not None and stats is not None and not stats.empty:
     min_val = stats['Pct_Change'].min()
@@ -173,41 +175,41 @@ if df is not None and stats is not None and not stats.empty:
     best_sell = stats.loc[stats['Pct_Change'].idxmax()]['Hour']
     potential_profit = max_val - min_val
 
-    # KPI Kartları (Beyaz & Temiz)
+    # KPI Kartları
     col1, col2, col3 = st.columns(3)
-    col1.metric("📉 İdeal Alış", f"{int(best_buy)}:00", "Dip Seviye")
-    col2.metric("📈 İdeal Satış", f"{int(best_sell)}:00", "Zirve Seviye")
-    col3.metric("💰 Marj Potansiyeli", f"%{potential_profit:.2f}", "Fırsat")
+    col1.metric("📉 İdeal Alış", f"{int(best_buy)}:00", "Dip Noktası")
+    col2.metric("📈 İdeal Satış", f"{int(best_sell)}:00", "Zirve Noktası")
+    col3.metric("💰 Fırsat Marjı", f"%{potential_profit:.2f}", "Potansiyel")
 
-    # Grafik Alanı
-    st.markdown("### ⚡ Gün İçi Performans Simülasyonu")
+    # Grafik
+    st.markdown("### ⚡ Gün İçi Trend Simülasyonu")
     
     fig = go.Figure()
 
-    # Çizgi Rengi: Kurumsal Lacivert/Mavi
+    # Trend Çizgisi (Canlı Turuncu/Kırmızı)
     fig.add_trace(go.Scatter(
         x=stats['Hour'], y=stats['Pct_Change'],
         mode='lines', name='Trend',
-        line=dict(color='#0f4c81', width=3, shape='spline'),
-        fill='tozeroy', fillcolor='rgba(15, 76, 129, 0.1)'
+        line=dict(color='#ff6d00', width=4, shape='spline'), # Canlı Turuncu
+        fill='tozeroy', fillcolor='rgba(255, 109, 0, 0.1)'
     ))
 
-    # Alış (Yeşil)
+    # Alış (Yeşil - Kontrast için)
     fig.add_trace(go.Scatter(
         x=[best_buy], y=[min_val], mode='markers',
-        marker=dict(color='#10b981', size=15, line=dict(width=2, color='white')),
+        marker=dict(color='#2e7d32', size=16, line=dict(width=2, color='white')),
         name='AL'
     ))
 
-    # Satış (Kırmızı)
+    # Satış (Kırmızı - Kontrast için)
     fig.add_trace(go.Scatter(
         x=[best_sell], y=[max_val], mode='markers',
-        marker=dict(color='#ef4444', size=15, line=dict(width=2, color='white')),
+        marker=dict(color='#d32f2f', size=16, line=dict(width=2, color='white')),
         name='SAT'
     ))
 
     fig.update_layout(
-        template="plotly_white", # BEYAZ TEMA
+        template="plotly_white",
         plot_bgcolor='rgba(0,0,0,0)',
         paper_bgcolor='rgba(0,0,0,0)',
         xaxis=dict(
@@ -215,37 +217,36 @@ if df is not None and stats is not None and not stats.empty:
             tickvals=[10, 11, 12, 13, 14, 15, 16, 17, 18],
             range=[9.5, 18.5],
             showgrid=False,
-            linecolor='#e5e7eb'
+            linecolor='#ffcc80' # Turuncu Eksen Çizgisi
         ),
         yaxis=dict(
             title="Tahmini Değişim (%)",
-            gridcolor='#f3f4f6',
+            gridcolor='#ffe0b2', # Hafif turuncu ızgara
             zeroline=True,
-            zerolinecolor='#d1d5db'
+            zerolinecolor='#ffb74d'
         ),
         showlegend=False,
-        height=450,
-        margin=dict(l=20, r=20, t=40, b=20)
+        height=450
     )
     
     st.plotly_chart(fig, use_container_width=True)
 
     # Strateji Metni
     trend = "YÜKSELİŞ" if stats.iloc[-1]['Pct_Change'] > 0 else "DÜŞÜŞ"
-    border_color = "#10b981" if trend == "YÜKSELİŞ" else "#ef4444" # Yeşil veya Kırmızı
+    border_color = "#2e7d32" if trend == "YÜKSELİŞ" else "#d32f2f"
     
     st.markdown(f"""
     <div style="
         background-color: #ffffff; 
         border-left: 5px solid {border_color};
         padding: 20px; 
-        border-radius: 8px; 
-        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        border-radius: 10px; 
+        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
         margin-top: 20px;">
-        <h4 style="margin:0; color:#111827;">🤖 Yapay Zeka Özeti</h4>
-        <p style="color:#4b5563; margin-top:10px;">
-        Seçilen tarih <b>({user_date.strftime('%d %B')})</b> için piyasa eğilimi <strong style="color:{border_color}">{trend}</strong> yönündedir.<br>
-        En uygun strateji: Sabah <b>{int(best_buy)}:00</b> civarında pozisyon açıp, <b>{int(best_sell)}:00</b> sularında kârı realize etmektir.
+        <h4 style="margin:0; color:#e65100;">🔥 Strateji Özeti</h4>
+        <p style="color:#5d4037; margin-top:10px;">
+        <b>{user_date.strftime('%d %B')}</b> tarihi için yapay zeka öngörüsü <strong style="color:{border_color}">{trend}</strong> yönündedir.<br>
+        Gün içi trade fırsatı: <b>{int(best_buy)}:00</b> sularında alış, <b>{int(best_sell)}:00</b> civarında satış önerilmektedir.
         </p>
     </div>
     """, unsafe_allow_html=True)
