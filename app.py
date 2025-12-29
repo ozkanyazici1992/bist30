@@ -46,7 +46,7 @@ BIST_TICKERS = {
 }
 
 # -----------------------------------------------------------------------------
-# 2. VERİ ÇEKME & FEATURE ENGINEERING (HAFTALIK YAPI)
+# 2. VERİ ÇEKME & FEATURE ENGINEERING
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_optimized_data(ticker_symbol):
@@ -69,12 +69,8 @@ def get_optimized_data(ticker_symbol):
                  df['Date'] = df['Date'].dt.tz_localize('UTC')
             df['Date'] = df['Date'].dt.tz_convert('Europe/Istanbul').dt.tz_localize(None)
             
-            # --- YENİ MANTIK: HAFTA VE GÜN BİLGİSİ ---
-            # isocalendar().week -> Yılın kaçıncı haftası olduğu (1-52)
-            # dayofweek -> Haftanın hangi günü (0=Pazartesi, 6=Pazar)
             df['WeekOfYear'] = df['Date'].dt.isocalendar().week
             df['DayOfWeek'] = df['Date'].dt.dayofweek 
-            
             df['Hour'] = df['Date'].dt.hour
             df['DateOnly'] = df['Date'].dt.date
             
@@ -86,26 +82,32 @@ def get_optimized_data(ticker_symbol):
     return None
 
 def analyze_by_week_cycle(df, target_week, target_day_of_week):
-    """
-    Eski yöntem: Ay ve Gün (Örn: 15 Haziran)
-    Yeni yöntem: Yılın Haftası ve Haftanın Günü (Örn: 24. Haftanın Salı günü)
-    """
-    
-    # Filtre: Geçmiş yıllardaki AYNI HAFTA ve AYNI GÜN'ü bul
     mask = (
         (df['WeekOfYear'] == target_week) & 
         (df['DayOfWeek'] == target_day_of_week)
     )
     subset = df[mask].copy()
     
-    # Yeterli veri yoksa (örneğin geçmişte o gün tatilse)
     if len(subset) < 5: return None
 
     start_prices = subset.groupby('DateOnly')['Close'].transform('first')
     subset['Pct_Change'] = ((subset['Close'] - start_prices) / start_prices) * 100
     
+    # Gruplama
     hourly_stats = subset.groupby('Hour')['Pct_Change'].mean().reset_index()
-    hourly_stats = hourly_stats[(hourly_stats['Hour'] >= 9) & (hourly_stats['Hour'] <= 18)]
+    
+    # --- DÜZELTME BURADA: SAATLERİ ZORLA DOLDUR (10'dan 18'e) ---
+    # Bütün seans saatlerini içeren bir taslak oluşturuyoruz
+    full_hours = pd.DataFrame({'Hour': range(10, 19)}) # 10, 11, ... 18
+    
+    # Gerçek verilerle birleştiriyoruz (Merge)
+    hourly_stats = pd.merge(full_hours, hourly_stats, on='Hour', how='left')
+    
+    # Eksik verileri (NaN) enterpolasyon ile dolduruyoruz (çizgi kopmasın diye)
+    hourly_stats['Pct_Change'] = hourly_stats['Pct_Change'].interpolate(method='linear')
+    
+    # Eğer 18:00 hala boşsa (bazen kapanış verisi gelmez), 17:00'yi kopyala (Forward Fill)
+    hourly_stats['Pct_Change'] = hourly_stats['Pct_Change'].ffill()
     
     return hourly_stats
 
@@ -124,40 +126,35 @@ with st.sidebar:
     min_date = datetime(2026, 1, 1)
     user_date = st.date_input("İşlem Tarihi", value=min_date, min_value=min_date)
     
-    # Seçilen tarihin bilgilerini hesapla
     target_week = user_date.isocalendar().week
-    target_day_of_week = user_date.weekday() # 0: Pzt, 4: Cuma, 5: Cmt, 6: Paz
+    target_day_of_week = user_date.weekday()
     
     days_tr = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"]
     selected_day_name = days_tr[target_day_of_week]
     
     st.markdown("---")
-    st.info(f"**Analiz Mantığı:**\nSistem, geçmiş yılların **{target_week}. Haftasının {selected_day_name}** günlerini tarayacaktır.")
+    st.info(f"**Analiz Modu:**\nGeçmiş yılların **{target_week}. Haftası, {selected_day_name}** günleri taranıyor.")
 
 # Ana Başlık
 st.markdown(f"## 📈 {selected_name}")
 st.markdown(f"<span style='color:#ef6c00; font-weight:500'>Hedef: {user_date.year} / {target_week}. Hafta / {selected_day_name}</span>", unsafe_allow_html=True)
 
-# Hafta Sonu Kontrolü
-if target_day_of_week > 4: # 5 ve 6 Hafta sonudur
-    st.error(f"⚠️ **Piyasa Kapalı:** Seçtiğiniz tarih ({selected_day_name}) hafta sonuna denk geliyor. Borsa İstanbul kapalı olduğu için işlem yapılamaz. Lütfen hafta içi bir tarih seçiniz.")
+if target_day_of_week > 4:
+    st.error(f"⚠️ **Piyasa Kapalı:** {selected_day_name} günü hafta sonudur. Lütfen hafta içi bir tarih seçiniz.")
 else:
-    # Veri İşleme
     ticker_symbol = BIST_TICKERS[selected_name]
 
-    with st.status("Döngüsel analiz yapılıyor...", expanded=True) as status:
+    with st.status("Döngüsel veriler işleniyor...", expanded=True) as status:
         df = get_optimized_data(ticker_symbol)
         if df is not None:
-            # Yeni Fonksiyonu Çağırıyoruz
             stats = analyze_by_week_cycle(df, target_week, target_day_of_week)
-            
             if stats is not None and not stats.empty:
                 status.update(label="Analiz Tamamlandı!", state="complete", expanded=False)
             else:
-                status.update(label="Geçmiş Veri Bulunamadı (Resmi Tatil Olabilir)", state="error")
+                status.update(label="Bu hafta/gün için yeterli geçmiş veri yok.", state="error")
                 stats = None
         else:
-            status.update(label="Veri Alınamadı", state="error")
+            status.update(label="Sunucu Bağlantı Hatası", state="error")
 
     if df is not None and stats is not None and not stats.empty:
         min_val = stats['Pct_Change'].min()
@@ -173,11 +170,10 @@ else:
         col3.metric("💰 Fırsat Marjı", f"%{potential_profit:.2f}", "Potansiyel")
 
         # Grafik
-        st.markdown("### ⚡ Haftalık Döngü Simülasyonu")
+        st.markdown("### ⚡ Haftalık Döngü Simülasyonu (09:00 - 18:00)")
         
         fig = go.Figure()
 
-        # Trend Çizgisi
         fig.add_trace(go.Scatter(
             x=stats['Hour'], y=stats['Pct_Change'],
             mode='lines', name='Trend',
@@ -185,14 +181,12 @@ else:
             fill='tozeroy', fillcolor='rgba(255, 109, 0, 0.1)'
         ))
 
-        # Alış
         fig.add_trace(go.Scatter(
             x=[best_buy], y=[min_val], mode='markers',
             marker=dict(color='#2e7d32', size=16, line=dict(width=2, color='white')),
             name='AL'
         ))
 
-        # Satış
         fig.add_trace(go.Scatter(
             x=[best_sell], y=[max_val], mode='markers',
             marker=dict(color='#d32f2f', size=16, line=dict(width=2, color='white')),
@@ -205,8 +199,9 @@ else:
             paper_bgcolor='rgba(0,0,0,0)',
             xaxis=dict(
                 title="Saat (09:00 - 18:00)",
+                # SAATLERİ SABİTLİYORUZ
                 tickvals=[10, 11, 12, 13, 14, 15, 16, 17, 18],
-                range=[9.5, 18.5],
+                range=[9.5, 18.5], # 18:00'i mutlaka göster
                 showgrid=False,
                 linecolor='#ffcc80'
             ),
@@ -236,10 +231,8 @@ else:
             margin-top: 20px;">
             <h4 style="margin:0; color:#e65100;">🔥 Yapay Zeka Özeti</h4>
             <p style="color:#5d4037; margin-top:10px;">
-            Geçmiş yılların <b>{target_week}. Haftasının {selected_day_name}</b> günleri incelendiğinde, 
-            piyasa genel eğilimi <strong style="color:{border_color}">{trend}</strong> yönündedir.<br>
-            Gün içi strateji: <b>{int(best_buy)}:00</b> sularında destek seviyesinden alım, 
-            <b>{int(best_sell)}:00</b> civarında direnç seviyesinden satış.
+            Geçmiş <b>{target_week}. Hafta / {selected_day_name}</b> verilerine göre piyasa yönü <strong style="color:{border_color}">{trend}</strong> şeklindedir.<br>
+            Tavsiye: <b>{int(best_buy)}:00</b> sularında destek alımı, <b>{int(best_sell)}:00</b> sularında direnç satışı.
             </p>
         </div>
         """, unsafe_allow_html=True)
