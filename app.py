@@ -5,37 +5,14 @@ import plotly.graph_objects as go
 from datetime import datetime
 
 # -----------------------------------------------------------------------------
-# 1. KONFİGÜRASYON VE CSS
+# 1. SAYFA AYARLARI (TEMİZ & KURUMSAL)
 # -----------------------------------------------------------------------------
 st.set_page_config(
-    page_title="ProTrade AI | BIST30",
-    page_icon="💎",
+    page_title="BIST30 AI Trader",
+    page_icon="📈",
     layout="wide",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="expanded"
 )
-
-# CSS (Aynı Tasarım)
-st.markdown("""
-    <style>
-    .stApp {background-color: #0e1117;}
-    div[data-testid="stMetric"] {
-        background: linear-gradient(145deg, #1e2330, #171b25);
-        border: 1px solid #2d3748;
-        border-radius: 15px;
-        padding: 15px;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.3);
-    }
-    div[data-testid="stMetricLabel"] {color: #a0aec0 !important;}
-    div[data-testid="stMetricValue"] {color: #ffffff !important;}
-    .hero-title {
-        font-size: 3rem; font-weight: 800;
-        background: -webkit-linear-gradient(45deg, #00FFA3, #00C3FF);
-        -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-        margin-bottom: 0px;
-    }
-    .hero-subtitle {color: #718096; font-size: 1.2rem; margin-bottom: 30px;}
-    </style>
-""", unsafe_allow_html=True)
 
 # BIST 30 Listesi
 BIST_TICKERS = {
@@ -53,36 +30,29 @@ BIST_TICKERS = {
 }
 
 # -----------------------------------------------------------------------------
-# 2. OPTİMİZE EDİLMİŞ VERİ ÇEKME (PERFORMANS İYİLEŞTİRMESİ)
+# 2. HIZLI VERİ ÇEKME (PERFORMANS ODAKLI)
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_optimized_data(ticker_symbol):
-    """
-    Veriyi bir kez çeker ve hafızada tutar.
-    threads=True ile indirmeyi hızlandırır.
-    """
     try:
-        # threads=True parametresi indirmeyi hızlandırır
+        # threads=True ile çoklu indirme yaparak hızı artırıyoruz
         df = yf.download(ticker_symbol, period="2y", interval="1h", progress=False, threads=True)
         
         if df.empty: return None
         
-        # MultiIndex Düzeltme (Hızlı Yöntem)
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
             
         df = df.reset_index()
-        
-        # Sütun adı kontrolü ve düzeltme
         date_col = 'Date' if 'Date' in df.columns else 'Datetime'
         df.rename(columns={date_col: 'Date'}, inplace=True)
         
-        # Tarih İşlemleri (Vectorized - Daha Hızlı)
+        # TRT Saat Dilimi Ayarı
         if df['Date'].dt.tz is None:
              df['Date'] = df['Date'].dt.tz_localize('UTC')
         df['Date'] = df['Date'].dt.tz_convert('Europe/Istanbul').dt.tz_localize(None)
         
-        # Feature Engineering (Tek seferde atama)
+        # Feature Engineering
         df['Month'] = df['Date'].dt.month
         df['Day'] = df['Date'].dt.day
         df['Hour'] = df['Date'].dt.hour
@@ -93,7 +63,6 @@ def get_optimized_data(ticker_symbol):
         return None
 
 def analyze_seasonality(df, target_month, target_day, window=3):
-    # Veri filtreleme işlemlerini hızlandıralım
     mask = (
         (df['Month'] == target_month) & 
         (df['Day'] >= target_day - window) & 
@@ -103,46 +72,59 @@ def analyze_seasonality(df, target_month, target_day, window=3):
     
     if len(subset) < 3: return None
 
-    # Normalizasyon
+    # Normalizasyon (% Değişim)
     start_prices = subset.groupby('DateOnly')['Close'].transform('first')
     subset['Pct_Change'] = ((subset['Close'] - start_prices) / start_prices) * 100
     
-    # Gruplama
+    # 09:00 - 18:00 arası saatleri al
     hourly_stats = subset.groupby('Hour')['Pct_Change'].mean().reset_index()
     hourly_stats = hourly_stats[(hourly_stats['Hour'] >= 9) & (hourly_stats['Hour'] <= 18)]
     
     return hourly_stats
 
 # -----------------------------------------------------------------------------
-# 3. ARAYÜZ
+# 3. ARAYÜZ TASARIMI
 # -----------------------------------------------------------------------------
 
-st.markdown('<p class="hero-title">ProTrade AI</p>', unsafe_allow_html=True)
-st.markdown('<p class="hero-subtitle">Yapay Zeka Destekli BIST30 Gelecek Simülasyonu</p>', unsafe_allow_html=True)
-
+# --- Sidebar (Menü) ---
 with st.sidebar:
-    st.image("https://cdn-icons-png.flaticon.com/512/3429/3429177.png", width=50)
-    st.markdown("### ⚙️ Ayarlar")
-    selected_name = st.selectbox("Varlık Seçimi", list(BIST_TICKERS.keys()))
+    st.header("⚙️ Kontrol Paneli")
+    st.write("Analiz parametrelerini buradan ayarlayabilirsiniz.")
     
-    st.markdown("### 📅 Tarih")
+    selected_name = st.selectbox("Hisse Seçimi", list(BIST_TICKERS.keys()))
+    
+    st.markdown("---")
+    st.markdown("### 📅 Gelecek Planı")
+    
     min_date = datetime(2026, 1, 1)
-    user_date = st.date_input("İşlem Tarihi", value=min_date, min_value=min_date)
+    user_date = st.date_input(
+        "Hedef Tarih", 
+        value=min_date, 
+        min_value=min_date,
+        help="Sadece 2026 ve sonrası seçilebilir."
+    )
+    
+    st.info("💡 **İpucu:** Veriler Türkiye saati ile (09:00 - 18:10) gösterilmektedir.")
 
-# Spinner'ı sadece veri yoksa göster
+# --- Ana Sayfa ---
+st.markdown(f"## 📈 {selected_name}")
+st.markdown(f"**Hedeflenen Tarih:** {user_date.strftime('%d %B %Y')}")
+
+# Veri İşleme (Optimize Edilmiş Hızlı Yükleme)
 ticker_symbol = BIST_TICKERS[selected_name]
 
-# Yükleniyor mesajını daha modern yapalım
-with st.status("Veriler Analiz Ediliyor...", expanded=True) as status:
-    st.write("Sunucuya bağlanılıyor...")
+# Yükleniyor animasyonunu modernleştirelim
+with st.status("Piyasa verileri analiz ediliyor...", expanded=True) as status:
     df = get_optimized_data(ticker_symbol)
-    st.write("Zaman serileri işleniyor...")
     
     if df is not None:
         stats = analyze_seasonality(df, user_date.month, user_date.day)
-        status.update(label="Analiz Tamamlandı!", state="complete", expanded=False)
+        if stats is not None and not stats.empty:
+            status.update(label="Analiz Başarıyla Tamamlandı!", state="complete", expanded=False)
+        else:
+            status.update(label="Yetersiz Veri", state="error", expanded=False)
     else:
-        status.update(label="Veri Hatası!", state="error")
+        status.update(label="Bağlantı Hatası", state="error")
 
 if df is not None and stats is not None and not stats.empty:
     # Hesaplamalar
@@ -152,48 +134,85 @@ if df is not None and stats is not None and not stats.empty:
     best_sell = stats.loc[stats['Pct_Change'].idxmax()]['Hour']
     potential_profit = max_val - min_val
 
-    # KPI KARTLARI
-    col1, col2, col3 = st.columns(3)
-    with col1: st.metric(label="✅ İdeal Giriş", value=f"{int(best_buy)}:00", delta="Dip")
-    with col2: st.metric(label="🚀 Hedef Çıkış", value=f"{int(best_sell)}:00", delta="Tepe")
-    with col3: st.metric(label="💰 Potansiyel Marj", value=f"%{potential_profit:.2f}", delta="Fark")
+    # --- KPI KARTLARI (SADE VE ŞIK) ---
+    kpi1, kpi2, kpi3 = st.columns(3)
+    
+    with kpi1:
+        st.container(border=True).metric(label="📉 İdeal Alış Saati", value=f"{int(best_buy)}:00", delta="Dip Seviye")
+    with kpi2:
+        st.container(border=True).metric(label="📈 İdeal Satış Saati", value=f"{int(best_sell)}:00", delta="Tepe Seviye")
+    with kpi3:
+        st.container(border=True).metric(label="💰 Potansiyel Marj", value=f"%{potential_profit:.2f}", delta="Fark")
 
-    # GRAFİK
-    st.markdown("### ⚡ Gün İçi Fiyat Rotası")
+    # --- GRAFİK (AYDINLIK TEMA) ---
+    st.markdown("### ⏱️ Gün İçi Performans Simülasyonu")
+    
     fig = go.Figure()
 
+    # Ana Çizgi (Profesyonel Mavi)
     fig.add_trace(go.Scatter(
         x=stats['Hour'], y=stats['Pct_Change'],
-        mode='lines', name='Tahmin',
-        line=dict(color='#00FFA3', width=4, shape='spline'),
-        fill='tozeroy', fillcolor='rgba(0, 255, 163, 0.1)'
+        mode='lines',
+        name='Tahmini Hareket',
+        line=dict(color='#2962FF', width=4, shape='spline'), # Spline ile yumuşak geçiş
+        fill='tozeroy',
+        fillcolor='rgba(41, 98, 255, 0.1)'
     ))
-    
-    # İşaretleyiciler
-    fig.add_trace(go.Scatter(x=[best_buy], y=[min_val], mode='markers', marker=dict(color='#00FFA3', size=15), name='AL'))
-    fig.add_trace(go.Scatter(x=[best_sell], y=[max_val], mode='markers', marker=dict(color='#FF0055', size=15), name='SAT'))
+
+    # Alış Noktası (Yeşil)
+    fig.add_trace(go.Scatter(
+        x=[best_buy], y=[min_val],
+        mode='markers',
+        marker=dict(color='#00C853', size=15, line=dict(width=2, color='white')),
+        name='Alım Fırsatı'
+    ))
+
+    # Satış Noktası (Kırmızı)
+    fig.add_trace(go.Scatter(
+        x=[best_sell], y=[max_val],
+        mode='markers',
+        marker=dict(color='#D50000', size=15, line=dict(width=2, color='white')),
+        name='Satış Fırsatı'
+    ))
 
     fig.update_layout(
-        template="plotly_dark",
-        plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-        xaxis=dict(tickvals=[10,11,12,13,14,15,16,17,18], title="Saat (TRT)", showgrid=False),
-        yaxis=dict(title="Değişim (%)", gridcolor='#333333'),
-        margin=dict(l=10, r=10, t=10, b=10), showlegend=False, height=400
+        template="plotly_white", # Temiz beyaz arka plan
+        xaxis=dict(
+            title="Saat (09:00 - 18:10)", 
+            tickmode='array',
+            tickvals=[9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
+            showgrid=False,
+            linecolor='black'
+        ),
+        yaxis=dict(
+            title="Tahmini Değişim (%)", 
+            showgrid=True, 
+            gridcolor='#f0f0f0',
+            zeroline=True, 
+            zerolinecolor='#e0e0e0'
+        ),
+        hovermode="x unified",
+        margin=dict(l=20, r=20, t=30, b=20),
+        showlegend=False,
+        height=450
     )
+    
     st.plotly_chart(fig, use_container_width=True)
 
-    # TAVSİYE KUTUSU
-    trend = "YÜKSELİŞ" if stats.iloc[-1]['Pct_Change'] > 0 else "DÜŞÜŞ"
-    border = "#00FFA3" if trend == "YÜKSELİŞ" else "#FF0055"
-    st.markdown(f"""
-    <div style="border-left: 5px solid {border}; padding: 15px; background: rgba(255,255,255,0.05); border-radius: 5px;">
-        <h4 style="margin:0; color:white;">🤖 AI Öngörüsü: <span style="color:{border}">{trend}</span></h4>
-        <p style="color:#ccc; margin-top:5px; font-size:0.9rem;">
-        Sabah <b>{int(best_buy)}:00</b> sularında destek seviyesi, akşam üstü <b>{int(best_sell)}:00</b> civarında direnç testi bekleniyor.
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
+    # --- STRATEJİ KARTI ---
+    with st.container(border=True):
+        st.subheader("🤖 Yapay Zeka Stratejisi")
+        
+        trend = "YÜKSELİŞ" if stats.iloc[-1]['Pct_Change'] > 0 else "DÜŞÜŞ"
+        trend_color = "green" if trend == "YÜKSELİŞ" else "red"
+        
+        st.markdown(f"""
+        * **Genel Görünüm:** **{user_date.strftime('%d %B')}** tarihinde hissenin günü :{trend_color}[**{trend}**] ile kapatması bekleniyor.
+        * **Alış Zamanı:** Sabah volatilitesi sonrası saat **{int(best_buy)}:00** civarı güvenli bir giriş noktası olabilir.
+        * **Satış Zamanı:** Gün içi kârı realize etmek için en uygun zaman dilimi **{int(best_sell)}:00** sularıdır.
+        """)
+
 elif df is None:
-    st.error("Veri alınamadı. Lütfen internet bağlantınızı kontrol edin veya sayfayı yenileyin.")
+    st.warning("⚠️ Veri sunucusuna bağlanılamadı. Lütfen internet bağlantınızı kontrol edip sayfayı yenileyin.")
 else:
-    st.warning("Bu tarih için yeterli veri yok.")
+    st.info("👈 Analize başlamak için sol menüden bir hisse ve tarih seçin.")
