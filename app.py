@@ -96,17 +96,10 @@ def analyze_by_week_cycle(df, target_week, target_day_of_week):
     # Gruplama
     hourly_stats = subset.groupby('Hour')['Pct_Change'].mean().reset_index()
     
-    # --- DÜZELTME BURADA: SAATLERİ ZORLA DOLDUR (10'dan 18'e) ---
-    # Bütün seans saatlerini içeren bir taslak oluşturuyoruz
-    full_hours = pd.DataFrame({'Hour': range(10, 19)}) # 10, 11, ... 18
-    
-    # Gerçek verilerle birleştiriyoruz (Merge)
+    # EKSİK SAATLERİ DOLDURMA (Grafik Kopmasın Diye)
+    full_hours = pd.DataFrame({'Hour': range(10, 19)}) # 10 ile 18 arası
     hourly_stats = pd.merge(full_hours, hourly_stats, on='Hour', how='left')
-    
-    # Eksik verileri (NaN) enterpolasyon ile dolduruyoruz (çizgi kopmasın diye)
     hourly_stats['Pct_Change'] = hourly_stats['Pct_Change'].interpolate(method='linear')
-    
-    # Eğer 18:00 hala boşsa (bazen kapanış verisi gelmez), 17:00'yi kopyala (Forward Fill)
     hourly_stats['Pct_Change'] = hourly_stats['Pct_Change'].ffill()
     
     return hourly_stats
@@ -144,14 +137,16 @@ if target_day_of_week > 4:
 else:
     ticker_symbol = BIST_TICKERS[selected_name]
 
-    with st.status("Döngüsel veriler işleniyor...", expanded=True) as status:
+    # Yükleme Barı (Sadeleştirildi)
+    with st.status("Veriler işleniyor...", expanded=True) as status:
         df = get_optimized_data(ticker_symbol)
         if df is not None:
             stats = analyze_by_week_cycle(df, target_week, target_day_of_week)
             if stats is not None and not stats.empty:
-                status.update(label="Analiz Tamamlandı!", state="complete", expanded=False)
+                # BURAYI DEĞİŞTİRDİK: Sadece "Veri Hazır" yazıp kapanıyor
+                status.update(label="Veri Hazır", state="complete", expanded=False)
             else:
-                status.update(label="Bu hafta/gün için yeterli geçmiş veri yok.", state="error")
+                status.update(label="Bu hafta/gün için geçmiş veri yok.", state="error")
                 stats = None
         else:
             status.update(label="Sunucu Bağlantı Hatası", state="error")
@@ -199,9 +194,8 @@ else:
             paper_bgcolor='rgba(0,0,0,0)',
             xaxis=dict(
                 title="Saat (09:00 - 18:00)",
-                # SAATLERİ SABİTLİYORUZ
                 tickvals=[10, 11, 12, 13, 14, 15, 16, 17, 18],
-                range=[9.5, 18.5], # 18:00'i mutlaka göster
+                range=[9.5, 18.5],
                 showgrid=False,
                 linecolor='#ffcc80'
             ),
