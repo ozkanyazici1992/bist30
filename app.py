@@ -52,7 +52,7 @@ BIST_TICKERS = {
 }
 
 # -----------------------------------------------------------------------------
-# 2. VERİ ÇEKME VE İŞLEME
+# 2. VERİ ÇEKME VE İŞLEME (TÜRKİYE SAATİNE DÖNÜŞTÜRME EKLENDİ)
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=3600)
 def get_hourly_data(ticker_symbol):
@@ -66,7 +66,17 @@ def get_hourly_data(ticker_symbol):
         df = df.reset_index()
         date_col = 'Date' if 'Date' in df.columns else 'Datetime'
         df.rename(columns={date_col: 'Date'}, inplace=True)
-        df['Date'] = pd.to_datetime(df['Date']).dt.tz_localize(None)
+        
+        # --- KRİTİK DÜZELTME: SAAT DİLİMİ (TIMEZONE) ---
+        # Önce UTC olduğunu belirtiyoruz (yfinance genelde UTC verir)
+        if df['Date'].dt.tz is None:
+             df['Date'] = df['Date'].dt.tz_localize('UTC')
+        
+        # Sonra Türkiye Saatine (Europe/Istanbul) çeviriyoruz
+        df['Date'] = df['Date'].dt.tz_convert('Europe/Istanbul')
+        
+        # Son olarak timezone bilgisini siliyoruz (pandas işlemleri kolaylaşsın diye)
+        df['Date'] = df['Date'].dt.tz_localize(None)
         
         # Feature Engineering
         df['Month'] = df['Date'].dt.month
@@ -74,7 +84,7 @@ def get_hourly_data(ticker_symbol):
         df['Hour'] = df['Date'].dt.hour
         df['DateOnly'] = df['Date'].dt.date
         return df
-    except Exception:
+    except Exception as e:
         return None
 
 def analyze_seasonality(df, target_month, target_day, window=3):
@@ -92,8 +102,8 @@ def analyze_seasonality(df, target_month, target_day, window=3):
         lambda x: (x - x.iloc[0]) / x.iloc[0] * 100
     )
     
-    # SAAT FİLTRESİ GÜNCELLENDİ: 09:00 - 18:00 arası
-    # (Not: 18:00 verisi 18:10 kapanışını da içerir)
+    # ARTIK SAATLER TÜRKİYE SAATİ OLDUĞU İÇİN FİLTRE TAM OTURACAK
+    # 09:00 - 19:00 arasını alıyoruz ki 18:10 kapanışları da görünsün
     hourly_stats = subset.groupby('Hour')['Pct_Change'].mean().reset_index()
     hourly_stats = hourly_stats[(hourly_stats['Hour'] >= 9) & (hourly_stats['Hour'] <= 18)]
     
@@ -113,7 +123,7 @@ with st.sidebar:
     user_date = st.date_input("Hedef Tarih", value=min_date, min_value=min_date)
     
     st.markdown("---")
-    st.caption("Veriler 09:00 (Açılış) - 18:10 (Karanlık Oda Kapanış) aralığını kapsar.")
+    st.caption("Veriler Türkiye Saati (TRT) ile gösterilmektedir.")
 
 # --- Ana Sayfa ---
 st.markdown(f"## 📈 {selected_name}")
@@ -146,7 +156,7 @@ if df is not None:
             st.container(border=True).metric(label="📊 Referans Veri", value=f"{days_count} Gün")
 
         # GRAFİK
-        st.markdown("### ⏱️ Gün İçi Rota Simülasyonu")
+        st.markdown("### ⏱️ Gün İçi Rota Simülasyonu (TR Saati)")
         
         fig = go.Figure()
 
@@ -172,8 +182,9 @@ if df is not None:
         fig.update_layout(
             plot_bgcolor='white', paper_bgcolor='white',
             xaxis=dict(
-                title="Saat (09:00 - 18:10 Kapanış)", 
-                showgrid=False, dtick=1, linecolor='black'
+                title="Saat (TRT)", 
+                showgrid=False, dtick=1, linecolor='black',
+                range=[9.5, 18.5] # X eksenini biraz geniş tutalım
             ),
             yaxis=dict(
                 title="Tahmini Değişim (%)", 
